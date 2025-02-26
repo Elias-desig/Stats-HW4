@@ -13,7 +13,7 @@ library(tidyverse)
 library(lme4)
 ```
 loading Dataset
-
+link: https://www.kaggle.com/datasets/erikhambardzumyan/pubs?select=armenian_pubs.csv
 ```{r}
 df <- read.csv("C:/Users/Elias/Downloads/armenium_pubs_dataset/armenian_pubs.csv", header = TRUE, sep = ",")
 df <- as_tibble(df)
@@ -26,11 +26,30 @@ Preprocessing
 ```{r}
 df$Timestamp <- NULL
 df <-na.omit(df)
+
+#Correct spelling / Group duplicate Pub Names
+unique(df$Fav_Pub)
+
+df$Fav_Pub <- dplyr::case_when(
+    df$Fav_Pub %in% c("VOID", "Void") ~ "VOID",
+    df$Fav_Pub %in% c("Venue", "Venue ") ~ "Venue",
+    df$Fav_Pub %in% c("I have none", "Do not have one") ~ "No Fav",
+    df$Fav_Pub %in% c("DAS ", "DAS") ~ "DAS",
+    df$Fav_Pub %in% c("Tom Collins ", "Tom collins", "Tom Collins") ~ "Tom Collins",
+    df$Fav_Pub %in% c("The beatles", "Beatles") ~ "The Beatles",
+    df$Fav_Pub %in% c("Liberty ", "Liberty") ~ "Liberty",
+    df$Fav_Pub %in% c("37 pub", "Pub 37") ~ "Pub 37",
+    df$Fav_Pub %in% c("Bulldog ", "BullDog") ~ "BullDog",
+    TRUE ~ df$Fav_Pub  # Keep all other values unchanged
+)
+
+
 ```
 Plotting Data
 
 ```{r}
 colnames(df)
+
 df <- df %>% rename(
   Age = Age.,
   Gender = Gender.,
@@ -50,8 +69,18 @@ df %>% ggplot(aes(x = Income, y = WTS)) +
 ```
 
 ```{r}
-df %>% ggplot(aes(x = Fav_Pub, y = WTS)) + 
-        geom_point()
+# Bar chart for favorite WTS for different bars
+df %>% 
+  group_by(Fav_Pub) %>% 
+  summarise(mean_WTS = mean(WTS, na.rm = TRUE)) %>%  # Calculate mean WTS
+  ggplot(aes(x = reorder(Fav_Pub, mean_WTS), y = mean_WTS, fill = mean_WTS)) + 
+  geom_col() + 
+  coord_flip() +  
+  scale_fill_viridis_c() +  # Better color scale for numeric values
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8, vjust = 0.5)) +  # Adjust label size
+  labs(x = "Favorite Pub", y = "Mean WTS", title = "Mean Willingness to Spend for Different Pubs")
+
 ```
 
 ```{r}
@@ -67,15 +96,19 @@ df %>%
 
 
 ```
+Plot ...
+```{r}
+df %>% ggplot(aes(x = Age, y = WTS)) + 
+        geom_point()
+```
 
+Hypothesis 1:
+Willingness to spend is determined by Income
 ```{r}
 
 ```
 
-```{r}
-
-```
-
+Hypothesis 2
 ```{r}
 
 ```
