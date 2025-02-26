@@ -1,1 +1,82 @@
+---
+title: "HW4"
+output: html_document
+date: "2025-02-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+loading packages
+```{r}
+library(tidyverse)
+library(lme4)
+```
+loading Dataset
+
+```{r}
+df <- read.csv("C:/Users/Elias/Downloads/armenium_pubs_dataset/armenian_pubs.csv", header = TRUE, sep = ",")
+df <- as_tibble(df)
+head(df)    # Show the first few rows
+str(df)     # Show the structure of the dataframe
+summary(df) # Get summary statistics
+
+```
+Preprocessing
+```{r}
+df$Timestamp <- NULL
+df <-na.omit(df)
+```
+Plotting Data
+
+```{r}
+colnames(df)
+df <- df %>% rename(
+  Age = Age.,
+  Gender = Gender.,
+  Income = Income.
+  
+)
+df %>% ggplot(aes(x = Age, y = WTS)) + 
+        geom_point()
+
+
+```
+Plot 2
+
+```{r}
+df %>% ggplot(aes(x = Income, y = WTS)) + 
+        geom_point()
+```
+
+```{r}
+df %>% ggplot(aes(x = Fav_Pub, y = WTS)) + 
+        geom_point()
+```
+
+```{r}
+df$Gender <- factor(df$Gender, levels = c("Male", "Female", "Other")) # Adjust levels as needed
+# Bar chart for favorite bar by gender
+df %>% 
+  ggplot(aes(x = Fav_Pub, fill = Gender)) + 
+  geom_bar(position = "dodge") + 
+  coord_flip() +  
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 6, vjust = 0.5)) +  # Increase font size
+  labs(x = "Favorite Pub", y = "Count", title = "Favorite Pubs by Gender")
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
 
