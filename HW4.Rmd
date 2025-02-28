@@ -41,137 +41,25 @@ theme_set(theme_minimal(base_size = 12) +
                 panel.grid.minor = element_blank()))
 ```
 
-## 2. Data Import Functions
+## 3. Load and Process Downsampled Data
 
-```{r data_import_functions}
-# Function to read continuous physiological data files with robust error handling
-read_continuous_data <- function(file_path) {
-  # First try reading with readr for better error handling
-  tryCatch({
-    # Read data with more control over column types
-    data <- read.csv(file_path, header = FALSE, stringsAsFactors = FALSE)
-    
-    # Determine if the file has 8 or 10 columns
-    if(ncol(data) == 8) {
-      colnames(data) <- c("Time", "BVP", "Corr", "Resp", "Skin", "Temp", "Trap", "Zygo")
-    } else if(ncol(data) == 10) {
-      colnames(data) <- c("Time", "BVP", "Corr", "Resp", "Skin", "Temp", "Trap", "Zygo", 
-                           "EmotionalArousal", "EmotionalValence")
-    } else {
-      # Skip files with unexpected column counts
-      warning(paste("Skipping file with unexpected column count:", file_path))
-      return(NULL)
-    }
-    
-    # Convert all data columns to numeric, handling potential errors
-    for(col in 1:ncol(data)) {
-      data[[col]] <- as.numeric(as.character(data[[col]]))
-    }
-    
-    # Extract metadata from filename
-    file_name <- basename(file_path)
-    # Extract StimID info properly with regular expressions
-    stim_id_match <- regexpr("Stim\\d+_(\\d+)", file_name)
-    if(stim_id_match > 0) {
-      stim_id_str <- regmatches(file_name, stim_id_match)
-      stim_id <- as.numeric(gsub("Stim\\d+_", "", stim_id_str))
-    } else {
-      stim_id <- NA
-    }
-    
-    # Extract other metadata with proper regex
-    participant_match <- regexpr("P(\\d+)", file_name)
-    session_match <- regexpr("Sess(\\d+)", file_name)
-    stim_order_match <- regexpr("Stim(\\d+)_", file_name)
-    
-    # Add metadata columns with improved error handling
-    data$Participant <- if(participant_match > 0) 
-      as.numeric(gsub("P", "", regmatches(file_name, participant_match))) else NA
-    data$Session <- if(session_match > 0) 
-      as.numeric(gsub("Sess", "", regmatches(file_name, session_match))) else NA
-    data$StimOrder <- if(stim_order_match > 0)
-      as.numeric(gsub("Stim", "", gsub("_.*$", "", regmatches(file_name, stim_order_match)))) else NA
-    data$StimID <- stim_id
-    
-    # Add relative time from stimulus start (making Time=0 the stimulus start point)
-    # Documentation states that recording starts 15s before stimulus
-    data$RelativeTime <- data$Time + 15
-    
-    return(data)
-  }, error = function(e) {
-    warning(paste("Failed to process file:", file_path, "\nError:", e$message))
-    return(NULL)
-  })
-}
+```{r}
 
-# Function to read post-stimulus numeric data with improved error handling
-read_post_stimulus <- function(file_path) {
-  tryCatch({
-    data <- read.csv(file_path, header = FALSE)
-    
-    # Ensure we have the expected number of columns
-    if(ncol(data) >= 18) {
-      colnames(data) <- c("ReportTime", "StartTime", "EndTime", "Interrupted", "StimOrder", 
-                         "StimID", "ParticipantNumber", "Cough", "Sneeze", "Laugh", "Doze", 
-                         "Yawn", "ShiverChills", "MoveToMusic", "Other", "Familiarity", 
-                         "Liking", "Focus", "SelfConsciousness")[1:ncol(data)]
-    } else {
-      warning(paste("Post-stimulus file has unexpected column count:", file_path))
-      return(NULL)
-    }
-    
-    # Extract session from filename with regex
-    file_name <- basename(file_path)
-    session_match <- regexpr("Sess(\\d+)", file_name)
-    participant_match <- regexpr("P(\\d+)", file_name)
-    
-    data$Session <- if(session_match > 0) 
-      as.numeric(gsub("Sess", "", regmatches(file_name, session_match))) else NA
-    data$Participant <- if(participant_match > 0) 
-      as.numeric(gsub("P", "", regmatches(file_name, participant_match))) else NA
-    
-    # Convert numeric data to appropriate types
-    numeric_cols <- c("Interrupted", "StimOrder", "StimID", "Cough", "Sneeze", 
-                     "Laugh", "Doze", "Yawn", "ShiverChills", "MoveToMusic", "Other",
-                     "Familiarity", "Liking", "Focus", "SelfConsciousness")
-    numeric_cols <- numeric_cols[numeric_cols %in% names(data)]
-    
-    for(col in numeric_cols) {
-      data[[col]] <- as.numeric(as.character(data[[col]]))
-    }
-    
-    return(data)
-  }, error = function(e) {
-    warning(paste("Failed to process post-stimulus file:", file_path, "\nError:", e$message))
-    return(NULL)
-  })
-}
-```
 
-## 3. Load and Inspect Data
+# Load the downsampled data from CSV (replace with your actual file path)
+continuous_data_1Hz <- read.csv("C:/Users/Elias/Documents/continuous_data_1Hz_avg.csv")
 
-```{r load_data, cache=TRUE}
-# Set your data path
-data_path <- "C:/Users/Elias/Downloads/5632210/"
+# Make sure all numeric columns are properly typed
+numeric_cols <- c("Time", "RelativeTime", "BVP", "Corr", "Resp", "Skin", "Temp", "Trap", "Zygo")
+continuous_data_1Hz[numeric_cols] <- lapply(continuous_data_1Hz[numeric_cols], as.numeric)
 
-# Load continuous physiological data
-continuous_files <- list.files(
-  path = data_path, 
-  pattern = glob2rx("Continuous100Hz*.csv"), 
-  recursive = TRUE, 
-  full.names = TRUE
-)
-
-# Process files with progress indicators
-cat("Processing", length(continuous_files), "continuous data files...\n")
-continuous_data_list <- lapply(continuous_files, read_continuous_data)
-continuous_data_list <- continuous_data_list[!sapply(continuous_data_list, is.null)]
-continuous_data <- bind_rows(continuous_data_list)
-cat("Loaded", nrow(continuous_data), "rows of continuous physiological data\n")
+# Convert categorical variables to factors if needed
+factor_cols <- c("Participant", "Session", "StimID", "StimOrder")
+continuous_data_1Hz[factor_cols] <- lapply(continuous_data_1Hz[factor_cols], as.factor)
 
 # Load post-stimulus data
 post_stim_files <- list.files(
-  path = data_path,
+  path = "C:/Users/Elias/Downloads/5632210",
   pattern = glob2rx("PostStimulus_Numeric*.csv"), 
   recursive = TRUE,
   full.names = TRUE
@@ -183,165 +71,29 @@ post_stimulus_list <- post_stimulus_list[!sapply(post_stimulus_list, is.null)]
 post_stimulus_data <- bind_rows(post_stimulus_list)
 cat("Loaded", nrow(post_stimulus_data), "rows of post-stimulus data\n")
 
-# Create stimulus metadata
-stimulus_metadata <- tibble(
-  StimID = c(101, 102, 103, 104, 105, 106, 107, 
-             211, 212, 213, 214, 
-             221, 222, 223, 224, 
-             231, 232, 233, 234, 
-             241, 242, 243, 244),
-  Title = c("String Quartet Op. 131, II - III", "Stampede", "Basket", "1685/Bach", 
-            "O Fortuna, Carmina Burana", "Le rosier de trois couleurs de roses", "Visiting Hours",
-            "Timshel", "Reapers", "L'inverno (Winter): I. Allegro Non Molto", "Nanou 2",
-            "Endless Love", "Dare You to Move", "Enchanted Suite", "Love Theme for Nata",
-            "Always Be My Baby", "Hard In Da Paint", "Animals", "Europa (Earth's Cry Heaven's Smile)",
-            "Ojos Color Sol", "It's Still Rock and Roll to Me", "Rodeo: Hoe-Down", "25-1-14-14"),
-  Artist = c("Artemis Quartet/L. v. Beethoven", "The Quantic Soul Orchestra/Will Holland", 
-             "Dan Mangan", "Nosaj Thing", "Orch. Symph. Montreal/Carl Orff", 
-             "STRADA/Anon", "Shane Koyczan", "Mumford & Sons", "Muse", 
-             "Joshua Bell & Academy of St. Martin in the Fields/A. Vivaldi", "Aphex Twin",
-             "Luther Vandross/L. Richie", "Switchfoot/J. Foreman", "Alan Menken", "Ennio Morricone",
-             "Mariah Carey/M. Carey & J. Dupri & M. Seal", "Waka Flocka Flame", "Martin Garrix", 
-             "Santana/C. Santana & T. Coster", "Calle 13/E. Cabra", "Billy Joel", 
-             "Leonard Slatkin & Saint Louis Symphony Orchestra/A. Copland", "Pierre Lapointe"),
-  Genre = c("Classical", "Funk", "Singer/Songwriter", "Dubstep/Glitch-hop", 
-            "20th C. Classical", "French Canadian Folksong", "Spoken word", 
-            "Folk", "Rock", "Baroque", "Piano", 
-            "R & B", "Pop", "Soundtrack", "Soundtrack", 
-            "Pop", "Hip-hop/Rap", "Electronic Dance Music", "Rock", 
-            "Latin Urban", "Rock'n'Roll", "Classical", "French Pop"),
-  Duration_s = c(215, 188, 232, 168, 159, 146, 250, 
-                 173, 360, 204, 204, 
-                 258, 247, 272, 247, 
-                 258, 246, 304, 306, 
-                 217, 177, 261, 142)
-) %>%
-  mutate(
-    ExperimentSelected = substr(as.character(StimID), 1, 1) == "1",
-    ParticipantSelected = substr(as.character(StimID), 1, 1) == "2",
-    # Add broad genre categories
-    GenreCategory = case_when(
-      Genre %in% c("Classical", "Baroque", "20th C. Classical", "Piano") ~ "Classical",
-      Genre %in% c("Rock", "Rock'n'Roll") ~ "Rock",
-      Genre %in% c("Pop", "R & B", "Singer/Songwriter", "Folk") ~ "Pop/Folk",
-      Genre %in% c("Hip-hop/Rap", "Electronic Dance Music", "Dubstep/Glitch-hop", "Funk") ~ "Electronic/Urban",
-      Genre %in% c("Soundtrack") ~ "Soundtrack",
-      TRUE ~ "Other"
-    )
+# Load stimulus metadata (if not included in the downsampled data)
+# Only needed if the metadata wasn't joined to your data before downsampling
+if(!"Title" %in% names(continuous_data_1Hz)) {
+  stimulus_metadata <- tibble(
+    StimID = c(101, 102, 103, 104, 105, 106, 107, 
+               211, 212, 213, 214, 
+               221, 222, 223, 224, 
+               231, 232, 233, 234, 
+               241, 242, 243, 244),
+    # Rest of metadata as in your original code
+    # ...
   )
-```
-
-## 4. Data Cleaning and Feature Extraction
-
-### 4.1 Data Quality Assessment
-
-```{r data_quality}
-# Check for missing values
-missing_data <- continuous_data %>%
-  summarize(across(everything(), ~sum(is.na(.)))) %>%
-  pivot_longer(everything(), names_to = "Variable", values_to = "Missing_Count") %>%
-  filter(Missing_Count > 0) %>%
-  arrange(desc(Missing_Count))
-
-# Print missing data summary
-if(nrow(missing_data) > 0) {
-  print(missing_data)
-} else {
-  cat("No missing values found in continuous data\n")
+  # Join metadata to the downsampled data
+  continuous_data_1Hz <- continuous_data_1Hz %>%
+    left_join(stimulus_metadata, by = "StimID")
 }
 
-# Examine data ranges to identify potential artifacts
-data_ranges <- continuous_data %>%
-  summarize(across(c(BVP, Corr, Resp, Skin, Temp, Trap, Zygo), 
-                   list(min = ~min(., na.rm = TRUE), 
-                        max = ~max(., na.rm = TRUE),
-                        mean = ~mean(., na.rm = TRUE),
-                        sd = ~sd(., na.rm = TRUE))))
 
-print(data_ranges)
-
-# Identify and count outliers using the 1.5*IQR rule
-outlier_counts <- continuous_data %>%
-  summarize(across(c(BVP, Corr, Resp, Skin, Temp, Trap, Zygo), ~{
-    q1 <- quantile(., 0.25, na.rm = TRUE)
-    q3 <- quantile(., 0.75, na.rm = TRUE)
-    iqr <- q3 - q1
-    sum(. < (q1 - 1.5 * iqr) | . > (q3 + 1.5 * iqr), na.rm = TRUE)
-  }))
-
-print(outlier_counts)
 ```
-
-### 4.2 Cleaning and Preprocessing
-
-```{r cleaning}
-# Apply data cleaning with more sophisticated artifact detection
-cleaned_continuous <- continuous_data %>%
-  # Identify potential physiological artifacts using percentile-based approach
-  group_by(Participant, Session, StimID) %>%
-  mutate(
-    across(c(BVP, Corr, Resp, Skin, Temp, Trap, Zygo), list(
-      lower_bound = ~quantile(., 0.01, na.rm = TRUE) - 3*IQR(., na.rm = TRUE),
-      upper_bound = ~quantile(., 0.99, na.rm = TRUE) + 3*IQR(., na.rm = TRUE)
-    ))
-  ) %>%
-  mutate(
-    artifact_flag = BVP < BVP_lower_bound | BVP > BVP_upper_bound |
-                   Skin < Skin_lower_bound | Skin > Skin_upper_bound |
-                   Resp < Resp_lower_bound | Resp > Resp_upper_bound |
-                   Corr < Corr_lower_bound | Corr > Corr_upper_bound |
-                   Trap < Trap_lower_bound | Trap > Trap_upper_bound |
-                   Zygo < Zygo_lower_bound | Zygo > Zygo_upper_bound
-  ) %>%
-  # Remove artifacts and clean up the temporary columns
-  filter(!artifact_flag) %>%
-  select(-ends_with("_lower_bound"), -ends_with("_upper_bound"), -artifact_flag) %>%
-  ungroup() %>%
-  # Join with stimulus metadata
-  left_join(stimulus_metadata, by = "StimID")
-```
-
-
-### Downsample Data and write to csv
-
-```{r}
-# Alternative: Downsample by averaging every N samples
-downsample_physio_data_avg <- function(data, target_freq = 1, original_freq = 100) {
-  # Calculate window size
-  window_size <- original_freq / target_freq
-  
-  # Group by metadata and time windows
-  downsampled <- data %>%
-    group_by(Participant, Session, StimID, StimOrder) %>%
-    mutate(time_window = floor(row_number() / window_size)) %>%
-    group_by(Participant, Session, StimID, StimOrder, time_window) %>%
-    summarize(
-      Time = mean(Time),
-      RelativeTime = mean(RelativeTime),
-      BVP = mean(BVP),
-      Corr = mean(Corr),
-      Resp = mean(Resp),
-      Skin = mean(Skin),
-      Temp = mean(Temp),
-      Trap = mean(Trap),
-      Zygo = mean(Zygo),
-      # Include any other averaged columns as needed
-      .groups = "drop"
-    ) %>%
-    select(-time_window)
-  
-  return(downsampled)
-}
-
-# Use the averaging approach if you prefer
-continuous_data_1Hz_avg <- downsample_physio_data_avg(cleaned_continuous, target_freq = 0.01, original_freq = 100)
-write.csv(continuous_data_1Hz_avg, file = "continuous_data_1Hz_avg.csv", row.names = FALSE)
-```
-
 Plot
 ```{r}
 # Visualization to confirm no extreme outliers remain
-cleaned_boxplots <- continuous_data_1Hz_avg %>%
+cleaned_boxplots <- cleaned_continuous %>%
   pivot_longer(cols = c(BVP, Corr, Resp, Skin, Temp, Trap, Zygo), 
                names_to = "Measure", values_to = "Value") %>%
   ggplot(aes(x = Measure, y = Value)) +
