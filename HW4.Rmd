@@ -1,25 +1,50 @@
 ---
-title: "HW4"
-output: html_document
-date: "2025-02-26"
+title: "Music Physiological Response Analysis"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: cosmo
+date: "2025-02-28"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10, 
+  fig.height = 6,
+  out.width = "100%"
+)
 ```
-loading packages
-```{r}
+
+## 1. Load Packages and Set Theme
+
+```{r packages}
 # Load necessary packages
 library(tidyverse)
 library(data.table)
 library(lubridate)
 library(lme4)      # For mixed linear models
+library(lmerTest)  # For p-values in mixed models
+library(sjPlot)    # For model visualization
 library(ggplot2)   # For visualization
-```
-loading Dataset
-link: https://www.kaggle.com/datasets/erikhambardzumyan/pubs?select=armenian_pubs.csv
-```{r}
+library(patchwork) # For combining plots
+library(scales)    # For better axis formatting
+library(psych)     # For descriptive statistics
 
+# Set a consistent theme for all plots
+theme_set(theme_minimal(base_size = 12) + 
+          theme(legend.position = "bottom",
+                panel.grid.minor = element_blank()))
+```
+
+## 2. Data Import Functions
+
+```{r data_import_functions}
+# Function to read continuous physiological data files with robust error handling
 read_continuous_data <- function(file_path) {
   # First try reading with readr for better error handling
   tryCatch({
@@ -45,21 +70,32 @@ read_continuous_data <- function(file_path) {
     
     # Extract metadata from filename
     file_name <- basename(file_path)
-    parts <- strsplit(file_name, "_|\\.")[[1]]
+    # Extract StimID info properly with regular expressions
+    stim_id_match <- regexpr("Stim\\d+_(\\d+)", file_name)
+    if(stim_id_match > 0) {
+      stim_id_str <- regmatches(file_name, stim_id_match)
+      stim_id <- as.numeric(gsub("Stim\\d+_", "", stim_id_str))
+    } else {
+      stim_id <- NA
+    }
     
-    # Add metadata columns with error handling
-    tryCatch({
-      data$Participant <- as.numeric(gsub("P", "", parts[2]))
-      data$Session <- as.numeric(gsub("Sess", "", parts[3]))
-      data$StimOrder <- as.numeric(gsub("Stim", "", parts[5]))
-      data$StimID <- as.numeric(parts[6])
-    }, error = function(e) {
-      warning(paste("Error extracting metadata from filename:", file_path))
-      data$Participant <- NA
-      data$Session <- NA
-      data$StimOrder <- NA
-      data$StimID <- NA
-    })
+    # Extract other metadata with proper regex
+    participant_match <- regexpr("P(\\d+)", file_name)
+    session_match <- regexpr("Sess(\\d+)", file_name)
+    stim_order_match <- regexpr("Stim(\\d+)_", file_name)
+    
+    # Add metadata columns with improved error handling
+    data$Participant <- if(participant_match > 0) 
+      as.numeric(gsub("P", "", regmatches(file_name, participant_match))) else NA
+    data$Session <- if(session_match > 0) 
+      as.numeric(gsub("Sess", "", regmatches(file_name, session_match))) else NA
+    data$StimOrder <- if(stim_order_match > 0)
+      as.numeric(gsub("Stim", "", gsub("_.*$", "", regmatches(file_name, stim_order_match)))) else NA
+    data$StimID <- stim_id
+    
+    # Add relative time from stimulus start (making Time=0 the stimulus start point)
+    # Documentation states that recording starts 15s before stimulus
+    data$RelativeTime <- data$Time + 15
     
     return(data)
   }, error = function(e) {
@@ -68,53 +104,86 @@ read_continuous_data <- function(file_path) {
   })
 }
 
-# Apply to all continuous files with better error handling
+# Function to read post-stimulus numeric data with improved error handling
+read_post_stimulus <- function(file_path) {
+  tryCatch({
+    data <- read.csv(file_path, header = FALSE)
+    
+    # Ensure we have the expected number of columns
+    if(ncol(data) >= 18) {
+      colnames(data) <- c("ReportTime", "StartTime", "EndTime", "Interrupted", "StimOrder", 
+                         "StimID", "ParticipantNumber", "Cough", "Sneeze", "Laugh", "Doze", 
+                         "Yawn", "ShiverChills", "MoveToMusic", "Other", "Familiarity", 
+                         "Liking", "Focus", "SelfConsciousness")[1:ncol(data)]
+    } else {
+      warning(paste("Post-stimulus file has unexpected column count:", file_path))
+      return(NULL)
+    }
+    
+    # Extract session from filename with regex
+    file_name <- basename(file_path)
+    session_match <- regexpr("Sess(\\d+)", file_name)
+    participant_match <- regexpr("P(\\d+)", file_name)
+    
+    data$Session <- if(session_match > 0) 
+      as.numeric(gsub("Sess", "", regmatches(file_name, session_match))) else NA
+    data$Participant <- if(participant_match > 0) 
+      as.numeric(gsub("P", "", regmatches(file_name, participant_match))) else NA
+    
+    # Convert numeric data to appropriate types
+    numeric_cols <- c("Interrupted", "StimOrder", "StimID", "Cough", "Sneeze", 
+                     "Laugh", "Doze", "Yawn", "ShiverChills", "MoveToMusic", "Other",
+                     "Familiarity", "Liking", "Focus", "SelfConsciousness")
+    numeric_cols <- numeric_cols[numeric_cols %in% names(data)]
+    
+    for(col in numeric_cols) {
+      data[[col]] <- as.numeric(as.character(data[[col]]))
+    }
+    
+    return(data)
+  }, error = function(e) {
+    warning(paste("Failed to process post-stimulus file:", file_path, "\nError:", e$message))
+    return(NULL)
+  })
+}
+```
+
+## 3. Load and Inspect Data
+
+```{r load_data, cache=TRUE}
+# Set your data path
+data_path <- "C:/Users/Elias/Downloads/5632210/"
+
+# Load continuous physiological data
 continuous_files <- list.files(
-  path = "C:/Users/Elias/Downloads/5632210/", 
+  path = data_path, 
   pattern = glob2rx("Continuous100Hz*.csv"), 
   recursive = TRUE, 
   full.names = TRUE
 )
 
-# Use bind_rows with .id parameter removed and filter out NULLs
+# Process files with progress indicators
+cat("Processing", length(continuous_files), "continuous data files...\n")
 continuous_data_list <- lapply(continuous_files, read_continuous_data)
 continuous_data_list <- continuous_data_list[!sapply(continuous_data_list, is.null)]
 continuous_data <- bind_rows(continuous_data_list)
+cat("Loaded", nrow(continuous_data), "rows of continuous physiological data\n")
 
-```
-Load post stimulus data
-```{r}
-# Function to read post-stimulus numeric data
-read_post_stimulus <- function(file_path) {
-  data <- read.csv(file_path, header = FALSE)
-  colnames(data) <- c("ReportTime", "StartTime", "EndTime", "Interrupted", "StimOrder", 
-                       "StimID", "Cough", "Sneeze", "Laugh", "Doze", 
-                       "Yawn", "ShiverChills", "MoveToMusic", "Other", "Familiarity", 
-                       "Liking", "Focus", "SelfConsciousness")
-  
-  # Extract session from filename
-  file_name <- basename(file_path)
-  parts <- strsplit(file_name, "_|\\.")[[1]]
-  data$Session <- as.numeric(gsub("Sess", "", parts[4]))
-  data$Participant <- as.numeric(gsub("P", "", parts[3]))
-  
-  return(data)
-}
-
-# Apply to all post-stimulus files
+# Load post-stimulus data
 post_stim_files <- list.files(
-  path = "C:/Users/Elias/Downloads/5632210/",
+  path = data_path,
   pattern = glob2rx("PostStimulus_Numeric*.csv"), 
   recursive = TRUE,
-  full.names = TRUE)
-post_stimulus_data <- map_dfr(post_stim_files, read_post_stimulus)
+  full.names = TRUE
+)
 
-# Add text responses (optional, depending on analysis needs)
+cat("Processing", length(post_stim_files), "post-stimulus files...\n")
+post_stimulus_list <- lapply(post_stim_files, read_post_stimulus)
+post_stimulus_list <- post_stimulus_list[!sapply(post_stimulus_list, is.null)]
+post_stimulus_data <- bind_rows(post_stimulus_list)
+cat("Loaded", nrow(post_stimulus_data), "rows of post-stimulus data\n")
 
-```
-Df containing Stimulus Metadata
-
-```{r}
+# Create stimulus metadata
 stimulus_metadata <- tibble(
   StimID = c(101, 102, 103, 104, 105, 106, 107, 
              211, 212, 213, 214, 
@@ -149,40 +218,188 @@ stimulus_metadata <- tibble(
 ) %>%
   mutate(
     ExperimentSelected = substr(as.character(StimID), 1, 1) == "1",
-    ParticipantSelected = substr(as.character(StimID), 1, 1) == "2"
+    ParticipantSelected = substr(as.character(StimID), 1, 1) == "2",
+    # Add broad genre categories
+    GenreCategory = case_when(
+      Genre %in% c("Classical", "Baroque", "20th C. Classical", "Piano") ~ "Classical",
+      Genre %in% c("Rock", "Rock'n'Roll") ~ "Rock",
+      Genre %in% c("Pop", "R & B", "Singer/Songwriter", "Folk") ~ "Pop/Folk",
+      Genre %in% c("Hip-hop/Rap", "Electronic Dance Music", "Dubstep/Glitch-hop", "Funk") ~ "Electronic/Urban",
+      Genre %in% c("Soundtrack") ~ "Soundtrack",
+      TRUE ~ "Other"
+    )
   )
-)
 ```
-Preprocess data and summarise into managable format
 
-```{r}
-# Apply data cleaning functions
+## 4. Data Cleaning and Feature Extraction
+
+### 4.1 Data Quality Assessment
+
+```{r data_quality}
+# Check for missing values
+missing_data <- continuous_data %>%
+  summarize(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Missing_Count") %>%
+  filter(Missing_Count > 0) %>%
+  arrange(desc(Missing_Count))
+
+# Print missing data summary
+if(nrow(missing_data) > 0) {
+  print(missing_data)
+} else {
+  cat("No missing values found in continuous data\n")
+}
+
+# Examine data ranges to identify potential artifacts
+data_ranges <- continuous_data %>%
+  summarize(across(c(BVP, Corr, Resp, Skin, Temp, Trap, Zygo), 
+                   list(min = ~min(., na.rm = TRUE), 
+                        max = ~max(., na.rm = TRUE),
+                        mean = ~mean(., na.rm = TRUE),
+                        sd = ~sd(., na.rm = TRUE))))
+
+print(data_ranges)
+
+# Identify and count outliers using the 1.5*IQR rule
+outlier_counts <- continuous_data %>%
+  summarize(across(c(BVP, Corr, Resp, Skin, Temp, Trap, Zygo), ~{
+    q1 <- quantile(., 0.25, na.rm = TRUE)
+    q3 <- quantile(., 0.75, na.rm = TRUE)
+    iqr <- q3 - q1
+    sum(. < (q1 - 1.5 * iqr) | . > (q3 + 1.5 * iqr), na.rm = TRUE)
+  }))
+
+print(outlier_counts)
+```
+
+### 4.2 Cleaning and Preprocessing
+
+```{r cleaning}
+# Apply data cleaning with more sophisticated artifact detection
 cleaned_continuous <- continuous_data %>%
-  # Remove physiological artifacts (values outside reasonable ranges)
-  filter(
-    BVP > -5 & BVP < 5,
-    Skin > -1 & Skin < 5,
-    Resp > -2 & Resp < 2
-    # Add additional filters as needed
+  # Identify potential physiological artifacts using percentile-based approach
+  group_by(Participant, Session, StimID) %>%
+  mutate(
+    across(c(BVP, Corr, Resp, Skin, Temp, Trap, Zygo), list(
+      lower_bound = ~quantile(., 0.01, na.rm = TRUE) - 3*IQR(., na.rm = TRUE),
+      upper_bound = ~quantile(., 0.99, na.rm = TRUE) + 3*IQR(., na.rm = TRUE)
+    ))
   ) %>%
+  mutate(
+    artifact_flag = BVP < BVP_lower_bound | BVP > BVP_upper_bound |
+                   Skin < Skin_lower_bound | Skin > Skin_upper_bound |
+                   Resp < Resp_lower_bound | Resp > Resp_upper_bound |
+                   Corr < Corr_lower_bound | Corr > Corr_upper_bound |
+                   Trap < Trap_lower_bound | Trap > Trap_upper_bound |
+                   Zygo < Zygo_lower_bound | Zygo > Zygo_upper_bound
+  ) %>%
+  # Remove artifacts and clean up the temporary columns
+  filter(!artifact_flag) %>%
+  select(-ends_with("_lower_bound"), -ends_with("_upper_bound"), -artifact_flag) %>%
+  ungroup() %>%
   # Join with stimulus metadata
   left_join(stimulus_metadata, by = "StimID")
+```
 
-# Feature extraction per stimulus presentation
+
+### Downsample Data and write to csv
+
+```{r}
+# Alternative: Downsample by averaging every N samples
+downsample_physio_data_avg <- function(data, target_freq = 1, original_freq = 100) {
+  # Calculate window size
+  window_size <- original_freq / target_freq
+  
+  # Group by metadata and time windows
+  downsampled <- data %>%
+    group_by(Participant, Session, StimID, StimOrder) %>%
+    mutate(time_window = floor(row_number() / window_size)) %>%
+    group_by(Participant, Session, StimID, StimOrder, time_window) %>%
+    summarize(
+      Time = mean(Time),
+      RelativeTime = mean(RelativeTime),
+      BVP = mean(BVP),
+      Corr = mean(Corr),
+      Resp = mean(Resp),
+      Skin = mean(Skin),
+      Temp = mean(Temp),
+      Trap = mean(Trap),
+      Zygo = mean(Zygo),
+      # Include any other averaged columns as needed
+      .groups = "drop"
+    ) %>%
+    select(-time_window)
+  
+  return(downsampled)
+}
+
+# Use the averaging approach if you prefer
+continuous_data_1Hz_avg <- downsample_physio_data_avg(cleaned_continuous, target_freq = 0.01, original_freq = 100)
+write.csv(continuous_data_1Hz_avg, file = "continuous_data_1Hz_avg.csv", row.names = FALSE)
+```
+
+Plot
+```{r}
+# Visualization to confirm no extreme outliers remain
+cleaned_boxplots <- continuous_data_1Hz_avg %>%
+  pivot_longer(cols = c(BVP, Corr, Resp, Skin, Temp, Trap, Zygo), 
+               names_to = "Measure", values_to = "Value") %>%
+  ggplot(aes(x = Measure, y = Value)) +
+  geom_boxplot() +
+  facet_wrap(~Measure, scales = "free_y") +
+  labs(title = "Distributions of Cleaned Physiological Measures",
+       y = "Value") +
+  theme(axis.text.x = element_blank())
+
+print(cleaned_boxplots)
+cleaned_continuous
+```
+
+### 4.3 Physiological Signal Feature Extraction
+
+```{r feature_extraction}
+# Calculate more advanced physiological features
 physio_features <- cleaned_continuous %>%
+  # Group by each stimulus presentation
   group_by(Participant, Session, StimOrder, StimID) %>%
   summarize(
     # Time domain features
     mean_BVP = mean(BVP, na.rm = TRUE),
     sd_BVP = sd(BVP, na.rm = TRUE),
+    
+    # BVP features - calculate heart rate variability approximation
+    # First 20 seconds often contains adaptation, so we'll use data after that
+    # Assuming 100Hz sampling rate
+    hr_var = if(n() > 3000) sd(BVP[RelativeTime >= 20], na.rm = TRUE) else NA,
+    
+    # Skin conductance features
     mean_Skin = mean(Skin, na.rm = TRUE),
     sd_Skin = sd(Skin, na.rm = TRUE),
+    # Calculate skin conductance response frequency (SCR)
+    # Simple approximation: count instances where skin conductance increases by 0.05 units within 3 seconds
+    scr_count = sum(diff(Skin) > 0.05, na.rm = TRUE),
+    scr_rate = scr_count / (max(RelativeTime, na.rm = TRUE) / 60), # per minute
+    
+    # Respiratory features
     mean_Resp = mean(Resp, na.rm = TRUE),
-    resp_rate = n_distinct(sign(diff(Resp)) == -1 & 
-                           lag(sign(diff(Resp))) == 1) / (max(Time) - min(Time)) * 60,
-    mean_Corr = mean(Corr, na.rm = TRUE),
-    mean_Zygo = mean(Zygo, na.rm = TRUE),
-    mean_Trap = mean(Trap, na.rm = TRUE),
+    sd_Resp = sd(Resp, na.rm = TRUE),
+    # Improved respiration rate calculation using zero crossings with filtering
+    resp_rate = sum(diff(sign(Resp - mean(Resp, na.rm = TRUE))) != 0, na.rm = TRUE) / 
+               (2 * max(RelativeTime, na.rm = TRUE) / 60), # divide by 2 to count full cycles
+    
+    # EMG features (facial expressions)
+    mean_Corr = mean(Corr, na.rm = TRUE), # Corrugator - frowning
+    sd_Corr = sd(Corr, na.rm = TRUE),
+    mean_Zygo = mean(Zygo, na.rm = TRUE), # Zygomaticus - smiling
+    sd_Zygo = sd(Zygo, na.rm = TRUE),
+    mean_Trap = mean(Trap, na.rm = TRUE), # Trapezius - tension
+    sd_Trap = sd(Trap, na.rm = TRUE),
+    
+    # Ratio of positive to negative facial expression (smiling vs frowning)
+    smile_frown_ratio = mean_Zygo / mean_Corr,
+    
+    # Stimulus duration
+    stim_duration = max(RelativeTime, na.rm = TRUE),
     
     # Calculate emotional metrics if available
     has_emotion_data = "EmotionalArousal" %in% names(.) & "EmotionalValence" %in% names(.),
@@ -191,74 +408,229 @@ physio_features <- cleaned_continuous %>%
     mean_valence = if("EmotionalValence" %in% names(.)) 
                       mean(EmotionalValence, na.rm = TRUE) else NA,
     
-    # You could add more complex features here:
-    # - Frequency domain features (e.g., HRV from BVP)
-    # - Rate of change metrics
-    # - Response synchronization between measures
+    # Calculate time trends - early vs. late response
+    # Early: first third, Late: last third
+    early_Skin = if(n() > 300) mean(Skin[RelativeTime <= quantile(RelativeTime, 0.33)], na.rm = TRUE) else NA,
+    late_Skin = if(n() > 300) mean(Skin[RelativeTime >= quantile(RelativeTime, 0.67)], na.rm = TRUE) else NA,
+    skin_change = late_Skin - early_Skin,
+    
+    early_Zygo = if(n() > 300) mean(Zygo[RelativeTime <= quantile(RelativeTime, 0.33)], na.rm = TRUE) else NA,
+    late_Zygo = if(n() > 300) mean(Zygo[RelativeTime >= quantile(RelativeTime, 0.67)], na.rm = TRUE) else NA,
+    zygo_change = late_Zygo - early_Zygo,
+    
+    # Sample count
+    n_samples = n()
   )
 ```
-Add poststimulus Data
-```{r}
+
+### 4.4 Create Analysis Dataset
+
+```{r analysis_dataset}
 # Create analysis dataset by joining feature data with post-stimulus data
 analysis_data <- physio_features %>%
   left_join(post_stimulus_data, by = c("Participant", "Session", "StimOrder", "StimID")) %>%
-  left_join(stimulus_metadata, by = "StimID")
-
-# Final cleaning
-analysis_data <- analysis_data %>%
-  # Flag potentially problematic recordings
+  left_join(stimulus_metadata, by = "StimID") %>%
+  # Convert binary responses to logical for better interpretation
+  mutate(across(c(Cough, Sneeze, Laugh, Doze, Yawn, ShiverChills, MoveToMusic, Other, 
+                 ExperimentSelected, ParticipantSelected), 
+                ~as.logical(as.numeric(.)))) %>%
+  # Scale emotion ratings to 0-100 for interpretability
+  mutate(
+    Familiarity_pct = Familiarity / 1.27,
+    Liking_pct = Liking / 1.27,
+    Focus_pct = Focus / 1.27,
+    SelfConsciousness_pct = SelfConsciousness / 1.27
+  ) %>%
+  # Final cleaning and quality flags
   mutate(
     data_quality_flag = case_when(
       Interrupted == 1 ~ "interrupted",
-      resp_rate < 8 | resp_rate > 25 ~ "abnormal_resp_rate",
+      is.na(resp_rate) | resp_rate < 8 | resp_rate > 25 ~ "abnormal_resp_rate",
       is.na(mean_BVP) | is.na(mean_Skin) ~ "missing_key_data",
+      n_samples < 1000 ~ "insufficient_data",
       TRUE ~ "ok"
+    ),
+    # Create musical arousal proxy based on genre
+    musical_arousal_proxy = case_when(
+      Genre %in% c("Hip-hop/Rap", "Electronic Dance Music", "Rock", "Dubstep/Glitch-hop") ~ "high",
+      Genre %in% c("Classical", "Baroque", "Soundtrack", "French Canadian Folksong", "Piano") ~ "low",
+      TRUE ~ "medium"
     )
   )
 
+# Check if we have any recordings with quality issues
+quality_summary <- analysis_data %>%
+  count(data_quality_flag) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+print(quality_summary)
 ```
-Descricptive Statistics and Plot
-```{r}
-# Basic descriptive statistics
-summary_stats <- analysis_data %>%
-  group_by(Genre) %>%
+
+## 5. Exploratory Data Analysis
+
+### 5.1 Overview of Dataset
+
+```{r data_overview}
+# Data overview - how many stimuli, sessions, etc.
+data_counts <- analysis_data %>%
   summarize(
-    n = n(),
-    mean_skin = mean(mean_Skin, na.rm = TRUE),
-    sd_skin = sd(mean_Skin, na.rm = TRUE),
-    mean_resp_rate = mean(resp_rate, na.rm = TRUE),
-    mean_liking = mean(Liking, na.rm = TRUE),
-    mean_familiarity = mean(Familiarity, na.rm = TRUE)
+    n_sessions = n_distinct(Session),
+    n_stimuli = n_distinct(StimID),
+    n_observations = n(),
+    n_experiment_selected = sum(ExperimentSelected, na.rm = TRUE),
+    n_participant_selected = sum(ParticipantSelected, na.rm = TRUE)
   )
 
-# Visualize key relationships
-ggplot(analysis_data, aes(x = Familiarity, y = mean_Skin, color = Genre)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  labs(title = "Relationship between Familiarity and Skin Conductance",
-       x = "Familiarity Rating", y = "Mean Skin Conductance")
+print(data_counts)
+
+# Distribution of stimuli by genre
+genre_distribution <- analysis_data %>%
+  group_by(Genre) %>%
+  summarize(
+    count = n(),
+    mean_liking = mean(Liking_pct, na.rm = TRUE),
+    mean_familiarity = mean(Familiarity_pct, na.rm = TRUE)
+  ) %>%
+  arrange(desc(count))
+
+print(genre_distribution)
+
+# Visualize distribution of stimuli by genre with liking scores
+genre_plot <- ggplot(genre_distribution, aes(x = reorder(Genre, -count), y = count, fill = mean_liking)) +
+  geom_col() +
+  scale_fill_viridis_c(option = "plasma", name = "Mean Liking (%)") +
+  labs(title = "Distribution of Stimuli by Genre with Liking Scores",
+       x = "Genre", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(genre_plot)
 ```
-Some Hyothesis demonstrated by linear models
-```{r}
-# Example models
 
-# 1. Effect of genre on physiological responses
-model1 <- lmer(mean_Skin ~ Genre + (1|Session), data = analysis_data)
-summary(model1)
+### 5.2 Descriptive Statistics for Key Variables
 
-# 2. Relationship between familiarity and emotional response
-model2 <- lmer(mean_Skin ~ Familiarity + Liking + (1|StimID) + (1|Session), 
-               data = analysis_data)
-summary(model2)
+```{r descriptive_stats}
+# Descriptive statistics for all numeric variables
+descriptive_stats <- analysis_data %>%
+  select(where(is.numeric), -ends_with("Time"), -contains("ID"), -Session, -Participant) %>%
+  select(-Interrupted, -starts_with("Stim")) %>%
+  psych::describe() %>%
+  select(n, mean, sd, median, min, max, skew, kurtosis)
 
-# 3. Interaction between stimulus type and physiological response
-model3 <- lmer(mean_Zygo ~ ExperimentSelected * Genre + (1|Session), 
-               data = analysis_data)
-summary(model3)
+print(descriptive_stats)
 
-# 4. More complex model with multiple predictors
-model4 <- lmer(mean_Skin ~ Familiarity + Liking + Focus + Genre + 
-                          Duration_s + (1|StimID) + (1|Session), 
-               data = analysis_data)
-summary(model4)
+# Compare physiological responses across genre categories
+physio_by_genre <- analysis_data %>%
+  group_by(GenreCategory) %>%
+  summarize(
+    mean_skin = mean(mean_Skin, na.rm = TRUE),
+    sd_skin = sd(mean_Skin, na.rm = TRUE),
+    mean_scr_rate = mean(scr_rate, na.rm = TRUE),
+    mean_resp_rate = mean(resp_rate, na.rm = TRUE),
+    mean_smile = mean(mean_Zygo, na.rm = TRUE),
+    mean_frown = mean(mean_Corr, na.rm = TRUE),
+    mean_liking = mean(Liking_pct, na.rm = TRUE),
+    n = n()
+  )
+
+print(physio_by_genre)
+
+# Visualize physiological responses by genre
+physio_genre_plot <- physio_by_genre %>%
+  pivot_longer(cols = starts_with("mean_"), names_to = "measure", values_to = "value") %>%
+  ggplot(aes(x = GenreCategory, y = value, fill = GenreCategory)) +
+  geom_col() +
+  facet_wrap(~measure, scales = "free_y") +
+  labs(title = "Physiological Responses by Genre Category",
+       x = "Genre Category", y = "Value") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+print(physio_genre_plot)
 ```
+
+### 5.3 Relationship between Subjective and Physiological Responses
+
+```{r subjective_physio_relationship}
+# Create correlation matrix for key variables
+correlation_vars <- analysis_data %>%
+  filter(data_quality_flag == "ok") %>%
+  select(mean_Skin, scr_rate, mean_Zygo, mean_Corr, smile_frown_ratio, 
+         Liking_pct, Familiarity_pct, Focus_pct, SelfConsciousness_pct)
+
+correlation_matrix <- cor(correlation_vars, use = "pairwise.complete.obs")
+corrplot::corrplot(correlation_matrix, method = "circle", type = "upper", 
+                   tl.col = "black", tl.srt = 45, addCoef.col = "black", 
+                   number.cex = 0.7)
+
+# Explore relationship between liking and physiological responses
+liking_plots <- analysis_data %>%
+  filter(data_quality_flag == "ok") %>%
+  select(Liking_pct, mean_Skin, mean_Zygo, mean_Corr, smile_frown_ratio) %>%
+  pivot_longer(cols = c(mean_Skin, mean_Zygo, mean_Corr, smile_frown_ratio), 
+               names_to = "measure", values_to = "value") %>%
+  ggplot(aes(x = Liking_pct, y = value)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "loess", se = TRUE) +
+  facet_wrap(~measure, scales = "free_y") +
+  labs(title = "Relationship between Liking and Physiological Responses",
+       x = "Liking (%)", y = "Value")
+
+print(liking_plots)
+
+# Visualize emotional reactions across sessions
+emotion_by_session <- analysis_data %>%
+  group_by(Session) %>%
+  summarize(
+    mean_liking = mean(Liking_pct, na.rm = TRUE),
+    mean_familiarity = mean(Familiarity_pct, na.rm = TRUE),
+    mean_focus = mean(Focus_pct, na.rm = TRUE),
+    mean_self_consciousness = mean(SelfConsciousness_pct, na.rm = TRUE),
+    mean_skin = mean(mean_Skin, na.rm = TRUE),
+    mean_zygo = mean(mean_Zygo, na.rm = TRUE)
+  ) %>%
+  pivot_longer(cols = starts_with("mean_"), names_to = "measure", values_to = "value")
+
+session_emotion_plot <- ggplot(emotion_by_session, aes(x = Session, y = value, group = measure, color = measure)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~measure, scales = "free_y") +
+  labs(title = "Changes in Emotional and Physiological Responses Across Sessions",
+       x = "Session Number", y = "Value") +
+  theme(legend.position = "none")
+
+print(session_emotion_plot)
+```
+
+### 5.4 Response Patterns for Familiar vs. Unfamiliar Music
+
+```{r familiar_unfamiliar}
+# Create binary familiarity variable for analysis
+analysis_data <- analysis_data %>%
+  mutate(
+    is_familiar = Familiarity_pct >= 50,
+    is_liked = Liking_pct >= 50
+  )
+
+# Compare responses to familiar vs. unfamiliar music
+familiarity_comparison <- analysis_data %>%
+  group_by(is_familiar) %>%
+  summarize(
+    n = n(),
+    mean_liking = mean(Liking_pct, na.rm = TRUE),
+    mean_focus = mean(Focus_pct, na.rm = TRUE),
+    mean_self_consciousness = mean(SelfConsciousness_pct, na.rm = TRUE),
+    mean_skin = mean(mean_Skin, na.rm = TRUE),
+    mean_zygo = mean(mean_Zygo, na.rm = TRUE),
+    mean_corr = mean(mean_Corr, na.rm = TRUE),
+    smile_ratio = mean(smile_frown_ratio, na.rm = TRUE),
+    laughed_pct = mean(Laugh, na.rm = TRUE) * 100,
+    moved_to_music_pct = mean(MoveToMusic, na.rm = TRUE) * 100,
+  )
+
+print(familiarity_comparison)
+
+# Visualize key differences between familiar and unfamiliar music
+familiarity_plots <- analysis_data %>%
+  pivot_longer(cols = c(mean_Skin, mean_Zygo, mean_Corr, smile_frown_ratio), 
+               names_to = "measure", values_to = "value") %>%
+  ggplot(aes(x = is_familiar, y = value, fill = is_
