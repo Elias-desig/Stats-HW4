@@ -9,107 +9,256 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 loading packages
 ```{r}
+# Load necessary packages
 library(tidyverse)
-library(lme4)
+library(data.table)
+library(lubridate)
+library(lme4)      # For mixed linear models
+library(ggplot2)   # For visualization
 ```
 loading Dataset
 link: https://www.kaggle.com/datasets/erikhambardzumyan/pubs?select=armenian_pubs.csv
 ```{r}
-df <- read.csv("C:/Users/Elias/Downloads/armenium_pubs_dataset/armenian_pubs.csv", header = TRUE, sep = ",")
-df <- as_tibble(df)
-head(df)    # Show the first few rows
-str(df)     # Show the structure of the dataframe
-summary(df) # Get summary statistics
 
-```
-Preprocessing
-```{r}
-df$Timestamp <- NULL
-df <-na.omit(df)
+read_continuous_data <- function(file_path) {
+  # First try reading with readr for better error handling
+  tryCatch({
+    # Read data with more control over column types
+    data <- read.csv(file_path, header = FALSE, stringsAsFactors = FALSE)
+    
+    # Determine if the file has 8 or 10 columns
+    if(ncol(data) == 8) {
+      colnames(data) <- c("Time", "BVP", "Corr", "Resp", "Skin", "Temp", "Trap", "Zygo")
+    } else if(ncol(data) == 10) {
+      colnames(data) <- c("Time", "BVP", "Corr", "Resp", "Skin", "Temp", "Trap", "Zygo", 
+                           "EmotionalArousal", "EmotionalValence")
+    } else {
+      # Skip files with unexpected column counts
+      warning(paste("Skipping file with unexpected column count:", file_path))
+      return(NULL)
+    }
+    
+    # Convert all data columns to numeric, handling potential errors
+    for(col in 1:ncol(data)) {
+      data[[col]] <- as.numeric(as.character(data[[col]]))
+    }
+    
+    # Extract metadata from filename
+    file_name <- basename(file_path)
+    parts <- strsplit(file_name, "_|\\.")[[1]]
+    
+    # Add metadata columns with error handling
+    tryCatch({
+      data$Participant <- as.numeric(gsub("P", "", parts[2]))
+      data$Session <- as.numeric(gsub("Sess", "", parts[3]))
+      data$StimOrder <- as.numeric(gsub("Stim", "", parts[5]))
+      data$StimID <- as.numeric(parts[6])
+    }, error = function(e) {
+      warning(paste("Error extracting metadata from filename:", file_path))
+      data$Participant <- NA
+      data$Session <- NA
+      data$StimOrder <- NA
+      data$StimID <- NA
+    })
+    
+    return(data)
+  }, error = function(e) {
+    warning(paste("Failed to process file:", file_path, "\nError:", e$message))
+    return(NULL)
+  })
+}
 
-#Correct spelling / Group duplicate Pub Names
-unique(df$Fav_Pub)
-
-df$Fav_Pub <- dplyr::case_when(
-    df$Fav_Pub %in% c("VOID", "Void") ~ "VOID",
-    df$Fav_Pub %in% c("Venue", "Venue ") ~ "Venue",
-    df$Fav_Pub %in% c("I have none", "Do not have one") ~ "No Fav",
-    df$Fav_Pub %in% c("DAS ", "DAS") ~ "DAS",
-    df$Fav_Pub %in% c("Tom Collins ", "Tom collins", "Tom Collins") ~ "Tom Collins",
-    df$Fav_Pub %in% c("The beatles", "Beatles") ~ "The Beatles",
-    df$Fav_Pub %in% c("Liberty ", "Liberty") ~ "Liberty",
-    df$Fav_Pub %in% c("37 pub", "Pub 37") ~ "Pub 37",
-    df$Fav_Pub %in% c("Bulldog ", "BullDog") ~ "BullDog",
-    TRUE ~ df$Fav_Pub  # Keep all other values unchanged
+# Apply to all continuous files with better error handling
+continuous_files <- list.files(
+  path = "C:/Users/Elias/Downloads/5632210/", 
+  pattern = glob2rx("Continuous100Hz*.csv"), 
+  recursive = TRUE, 
+  full.names = TRUE
 )
 
+# Use bind_rows with .id parameter removed and filter out NULLs
+continuous_data_list <- lapply(continuous_files, read_continuous_data)
+continuous_data_list <- continuous_data_list[!sapply(continuous_data_list, is.null)]
+continuous_data <- bind_rows(continuous_data_list)
 
 ```
-Plotting Data
-
+Load post stimulus data
 ```{r}
-colnames(df)
-
-df <- df %>% rename(
-  Age = Age.,
-  Gender = Gender.,
-  Income = Income.
+# Function to read post-stimulus numeric data
+read_post_stimulus <- function(file_path) {
+  data <- read.csv(file_path, header = FALSE)
+  colnames(data) <- c("ReportTime", "StartTime", "EndTime", "Interrupted", "StimOrder", 
+                       "StimID", "Cough", "Sneeze", "Laugh", "Doze", 
+                       "Yawn", "ShiverChills", "MoveToMusic", "Other", "Familiarity", 
+                       "Liking", "Focus", "SelfConsciousness")
   
+  # Extract session from filename
+  file_name <- basename(file_path)
+  parts <- strsplit(file_name, "_|\\.")[[1]]
+  data$Session <- as.numeric(gsub("Sess", "", parts[4]))
+  data$Participant <- as.numeric(gsub("P", "", parts[3]))
+  
+  return(data)
+}
+
+# Apply to all post-stimulus files
+post_stim_files <- list.files(
+  path = "C:/Users/Elias/Downloads/5632210/",
+  pattern = glob2rx("PostStimulus_Numeric*.csv"), 
+  recursive = TRUE,
+  full.names = TRUE)
+post_stimulus_data <- map_dfr(post_stim_files, read_post_stimulus)
+
+# Add text responses (optional, depending on analysis needs)
+
+```
+Df containing Stimulus Metadata
+
+```{r}
+stimulus_metadata <- tibble(
+  StimID = c(101, 102, 103, 104, 105, 106, 107, 
+             211, 212, 213, 214, 
+             221, 222, 223, 224, 
+             231, 232, 233, 234, 
+             241, 242, 243, 244),
+  Title = c("String Quartet Op. 131, II - III", "Stampede", "Basket", "1685/Bach", 
+            "O Fortuna, Carmina Burana", "Le rosier de trois couleurs de roses", "Visiting Hours",
+            "Timshel", "Reapers", "L'inverno (Winter): I. Allegro Non Molto", "Nanou 2",
+            "Endless Love", "Dare You to Move", "Enchanted Suite", "Love Theme for Nata",
+            "Always Be My Baby", "Hard In Da Paint", "Animals", "Europa (Earth's Cry Heaven's Smile)",
+            "Ojos Color Sol", "It's Still Rock and Roll to Me", "Rodeo: Hoe-Down", "25-1-14-14"),
+  Artist = c("Artemis Quartet/L. v. Beethoven", "The Quantic Soul Orchestra/Will Holland", 
+             "Dan Mangan", "Nosaj Thing", "Orch. Symph. Montreal/Carl Orff", 
+             "STRADA/Anon", "Shane Koyczan", "Mumford & Sons", "Muse", 
+             "Joshua Bell & Academy of St. Martin in the Fields/A. Vivaldi", "Aphex Twin",
+             "Luther Vandross/L. Richie", "Switchfoot/J. Foreman", "Alan Menken", "Ennio Morricone",
+             "Mariah Carey/M. Carey & J. Dupri & M. Seal", "Waka Flocka Flame", "Martin Garrix", 
+             "Santana/C. Santana & T. Coster", "Calle 13/E. Cabra", "Billy Joel", 
+             "Leonard Slatkin & Saint Louis Symphony Orchestra/A. Copland", "Pierre Lapointe"),
+  Genre = c("Classical", "Funk", "Singer/Songwriter", "Dubstep/Glitch-hop", 
+            "20th C. Classical", "French Canadian Folksong", "Spoken word", 
+            "Folk", "Rock", "Baroque", "Piano", 
+            "R & B", "Pop", "Soundtrack", "Soundtrack", 
+            "Pop", "Hip-hop/Rap", "Electronic Dance Music", "Rock", 
+            "Latin Urban", "Rock'n'Roll", "Classical", "French Pop"),
+  Duration_s = c(215, 188, 232, 168, 159, 146, 250, 
+                 173, 360, 204, 204, 
+                 258, 247, 272, 247, 
+                 258, 246, 304, 306, 
+                 217, 177, 261, 142)
+) %>%
+  mutate(
+    ExperimentSelected = substr(as.character(StimID), 1, 1) == "1",
+    ParticipantSelected = substr(as.character(StimID), 1, 1) == "2"
+  )
 )
-df %>% ggplot(aes(x = Age, y = WTS)) + 
-        geom_point()
-
-
 ```
-Plot 2
+Preprocess data and summarise into managable format
 
 ```{r}
-df %>% ggplot(aes(x = Income, y = WTS)) + 
-        geom_point()
-```
+# Apply data cleaning functions
+cleaned_continuous <- continuous_data %>%
+  # Remove physiological artifacts (values outside reasonable ranges)
+  filter(
+    BVP > -5 & BVP < 5,
+    Skin > -1 & Skin < 5,
+    Resp > -2 & Resp < 2
+    # Add additional filters as needed
+  ) %>%
+  # Join with stimulus metadata
+  left_join(stimulus_metadata, by = "StimID")
 
+# Feature extraction per stimulus presentation
+physio_features <- cleaned_continuous %>%
+  group_by(Participant, Session, StimOrder, StimID) %>%
+  summarize(
+    # Time domain features
+    mean_BVP = mean(BVP, na.rm = TRUE),
+    sd_BVP = sd(BVP, na.rm = TRUE),
+    mean_Skin = mean(Skin, na.rm = TRUE),
+    sd_Skin = sd(Skin, na.rm = TRUE),
+    mean_Resp = mean(Resp, na.rm = TRUE),
+    resp_rate = n_distinct(sign(diff(Resp)) == -1 & 
+                           lag(sign(diff(Resp))) == 1) / (max(Time) - min(Time)) * 60,
+    mean_Corr = mean(Corr, na.rm = TRUE),
+    mean_Zygo = mean(Zygo, na.rm = TRUE),
+    mean_Trap = mean(Trap, na.rm = TRUE),
+    
+    # Calculate emotional metrics if available
+    has_emotion_data = "EmotionalArousal" %in% names(.) & "EmotionalValence" %in% names(.),
+    mean_arousal = if("EmotionalArousal" %in% names(.)) 
+                      mean(EmotionalArousal, na.rm = TRUE) else NA,
+    mean_valence = if("EmotionalValence" %in% names(.)) 
+                      mean(EmotionalValence, na.rm = TRUE) else NA,
+    
+    # You could add more complex features here:
+    # - Frequency domain features (e.g., HRV from BVP)
+    # - Rate of change metrics
+    # - Response synchronization between measures
+  )
+```
+Add poststimulus Data
 ```{r}
-# Bar chart for favorite WTS for different bars
-df %>% 
-  group_by(Fav_Pub) %>% 
-  summarise(mean_WTS = mean(WTS, na.rm = TRUE)) %>%  # Calculate mean WTS
-  ggplot(aes(x = reorder(Fav_Pub, mean_WTS), y = mean_WTS, fill = mean_WTS)) + 
-  geom_col() + 
-  coord_flip() +  
-  scale_fill_viridis_c() +  # Better color scale for numeric values
-  theme_minimal() +
-  theme(axis.text.y = element_text(size = 8, vjust = 0.5)) +  # Adjust label size
-  labs(x = "Favorite Pub", y = "Mean WTS", title = "Mean Willingness to Spend for Different Pubs")
+# Create analysis dataset by joining feature data with post-stimulus data
+analysis_data <- physio_features %>%
+  left_join(post_stimulus_data, by = c("Participant", "Session", "StimOrder", "StimID")) %>%
+  left_join(stimulus_metadata, by = "StimID")
+
+# Final cleaning
+analysis_data <- analysis_data %>%
+  # Flag potentially problematic recordings
+  mutate(
+    data_quality_flag = case_when(
+      Interrupted == 1 ~ "interrupted",
+      resp_rate < 8 | resp_rate > 25 ~ "abnormal_resp_rate",
+      is.na(mean_BVP) | is.na(mean_Skin) ~ "missing_key_data",
+      TRUE ~ "ok"
+    )
+  )
 
 ```
-
+Descricptive Statistics and Plot
 ```{r}
-df$Gender <- factor(df$Gender, levels = c("Male", "Female", "Other")) # Adjust levels as needed
-# Bar chart for favorite bar by gender
-df %>% 
-  ggplot(aes(x = Fav_Pub, fill = Gender)) + 
-  geom_bar(position = "dodge") + 
-  coord_flip() +  
-  theme_minimal() +
-  theme(axis.text.y = element_text(size = 6, vjust = 0.5)) +  # Increase font size
-  labs(x = "Favorite Pub", y = "Count", title = "Favorite Pubs by Gender")
+# Basic descriptive statistics
+summary_stats <- analysis_data %>%
+  group_by(Genre) %>%
+  summarize(
+    n = n(),
+    mean_skin = mean(mean_Skin, na.rm = TRUE),
+    sd_skin = sd(mean_Skin, na.rm = TRUE),
+    mean_resp_rate = mean(resp_rate, na.rm = TRUE),
+    mean_liking = mean(Liking, na.rm = TRUE),
+    mean_familiarity = mean(Familiarity, na.rm = TRUE)
+  )
 
-
+# Visualize key relationships
+ggplot(analysis_data, aes(x = Familiarity, y = mean_Skin, color = Genre)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Relationship between Familiarity and Skin Conductance",
+       x = "Familiarity Rating", y = "Mean Skin Conductance")
 ```
-Plot ...
+Some Hyothesis demonstrated by linear models
 ```{r}
-df %>% ggplot(aes(x = Age, y = WTS)) + 
-        geom_point()
+# Example models
+
+# 1. Effect of genre on physiological responses
+model1 <- lmer(mean_Skin ~ Genre + (1|Session), data = analysis_data)
+summary(model1)
+
+# 2. Relationship between familiarity and emotional response
+model2 <- lmer(mean_Skin ~ Familiarity + Liking + (1|StimID) + (1|Session), 
+               data = analysis_data)
+summary(model2)
+
+# 3. Interaction between stimulus type and physiological response
+model3 <- lmer(mean_Zygo ~ ExperimentSelected * Genre + (1|Session), 
+               data = analysis_data)
+summary(model3)
+
+# 4. More complex model with multiple predictors
+model4 <- lmer(mean_Skin ~ Familiarity + Liking + Focus + Genre + 
+                          Duration_s + (1|StimID) + (1|Session), 
+               data = analysis_data)
+summary(model4)
 ```
-
-Hypothesis 1:
-Willingness to spend is determined by Income
-```{r}
-
-```
-
-Hypothesis 2
-```{r}
-
-```
-
