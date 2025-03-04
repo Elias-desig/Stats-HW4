@@ -305,7 +305,7 @@ cleaned_continuous <- continuous_data %>%
 ### Downsample Data and write to csv
 
 ```{r}
-# Alternative: Downsample by averaging every N samples
+# Downsample by averaging every N samples
 downsample_physio_data_avg <- function(data, target_freq = 1, original_freq = 100) {
   # Calculate window size
   window_size <- original_freq / target_freq
