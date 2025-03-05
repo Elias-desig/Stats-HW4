@@ -36,8 +36,7 @@ library(lme4)      # For mixed linear models
 ## Load Data
 
 ```{r}
-url <- "https://raw.githubusercontent.com/Elias-desig/Stats-HW4/refs/heads/main/Mental%20health%20Depression%20disorder%20Data.csv?token=GHSAT0AAAAAAC7MUCUFSTFNAEB6HZC3JJQAZ6ILOFQ"
-path = "C:/Users/Elias/Downloads/archive(1)/Mental_health_data.csv"
+url <- "https://raw.githubusercontent.com/Elias-desig/Stats-HW4/refs/heads/main/Mental_health_data.csv"
 df <- read.csv(url, fileEncoding = "UTF-8")
 ```
 
