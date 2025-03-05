@@ -28,13 +28,13 @@ knitr::opts_chunk$set(
 library(tidyverse)
 
 library(lme4)      # For mixed linear models
-
+library(ggExtra)
 
 ```
 
 
 ## Load Data
-
+ Original File: https://www.kaggle.com/datasets/thedevastator/uncover-global-trends-in-mental-health-disorder/data
 ```{r}
 url <- "https://raw.githubusercontent.com/Elias-desig/Stats-HW4/refs/heads/main/Mental_health_data.csv"
 df <- read.csv(url, fileEncoding = "UTF-8")
@@ -67,14 +67,26 @@ summary(df)
 
 ```
 
+## Plot data
+
 ```{r}
-df %>% ggplot(aes(Schizophrenia)) + 
-  geom_histogram() +
-  scale_x_continuous(trans='log10')
+
+long_df <- pivot_longer(df, cols = c(Schizophrenia, Bipolar.disorder, Eating.disorders, Anxiety.disorders, Drug.use.disorders, Depression, Alcohol.use.disorders), names_to = 'disorder', values_to = 'prevalence')
+
+long_df %>% ggplot(aes(x = prevalence, fill = disorder)) + 
+  geom_histogram() + 
+  facet_wrap(vars(disorder), scale="free")
+
 ```
 
 ```{r}
 
+p <- long_df %>% ggplot(aes(x=year, y=prevalence, color=disorder)) +
+      geom_point() +
+      theme(legend.position="none")
+ 
+# with marginal histogram
+p1 <- ggMarginal(p, type="histogram")
 ```
 
 ```{r}
