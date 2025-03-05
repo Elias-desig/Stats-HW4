@@ -80,19 +80,24 @@ long_df %>% ggplot(aes(x = prevalence, fill = disorder)) +
 ```
 
 ```{r}
-
-p <- long_df %>% ggplot(aes(x=year, y=prevalence, color=disorder)) +
+# Unnötiger Plot
+df %>% ggplot(aes(x=Year, y=Schizophrenia)) +
       geom_point() +
-      theme(legend.position="none")
- 
-# with marginal histogram
-p1 <- ggMarginal(p, type="histogram")
-```
+      geom_smooth(method = "lm")  
 
-```{r}
+  
 
 ```
 
-```{r}
 
+## Hypothesis 1
+
+```{r}
+model_1 <- lmer(Depression ~ Year + (1|Entity), data = df)
+summary(model_1)
+```
+
+```{r}
+model_1 <- lmer(Depression ~ Entity + (1|Year), data = df)
+summary(model_1)
 ```
