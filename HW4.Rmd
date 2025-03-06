@@ -29,6 +29,9 @@ library(tidyverse)
 
 library(lme4)      # For mixed linear models
 library(ggExtra)
+library(moments)
+library(corrplot)
+library(MuMIn)
 
 ```
 
@@ -80,12 +83,22 @@ long_df %>% ggplot(aes(x = prevalence, fill = disorder)) +
 ```
 
 ```{r}
-# Unnötiger Plot
-df %>% ggplot(aes(x=Year, y=Schizophrenia)) +
-      geom_point() +
-      geom_smooth(method = "lm")  
 
-  
+long_df %>% 
+  group_by(disorder) %>% 
+  summarize(skewness = moments::skewness(prevalence, na.rm = TRUE))
+
+# Create correlation matrix
+cor_matrix <- cor(df[,c("Schizophrenia", "Bipolar.disorder", "Eating.disorders", 
+                        "Anxiety.disorders", "Drug.use.disorders", 
+                        "Depression", "Alcohol.use.disorders")], 
+                  use = "complete.obs")
+
+# Visualize correlations
+corrplot::corrplot(cor_matrix, method = "circle")
+
+
+mean(df$Schizophrenia)
 
 ```
 
@@ -95,9 +108,30 @@ df %>% ggplot(aes(x=Year, y=Schizophrenia)) +
 Schizophrenia prevalence is not correlated with other mental disorders
 
 ```{r}
-model_1 <- lmer(Schizophrenia ~ Depression + Eating.disorders + Bipolar.disorder + Anxiety.disorders + Drug.use.disorders + Alcohol.use.disorders + (1|Entity), data = df)
+model_1 <- lmer(Schizophrenia ~ Depression + Eating.disorders + Bipolar.disorder + Anxiety.disorders + Drug.use.disorders + Alcohol.use.disorders + (1|Entity) + (1|Year), data = df)
 summary(model_1)
+
+
+
+
 ```
+Results:
+The model does show statistically significant effects of other mental disorders on schizophrenia. The intercept estimate can be read as a baseline prevalence of 0.126% when accounting for other disorders (The plain vanilla mean is 0.21%). Bipolar has the biggest impact (positive correlation) and after that Eating disorders, Alcoholism and Anxiety. All effects are very small, but statistically definitely significant. For the random effect we can see that the country has a much larger effect size than the year, and the residual variance is very small. We will check the r^2 and residual distribution next.
+
+
+```{r}
+r.squaredGLMM(model_1)
+plot(model_1)
+qqnorm(residuals(model_1))
+```
+Residuals?
+Residual QQ Norm whatevery quite bad, probably due to skewed distributions.
+
+We can infer the from the marginal R^2 that only 23% of the variance is explained by fixed effects. The model in general explaines 99.7% of variance in Schizophrenia. 
+
+It seems the the Hypothesis is somewhat correct in a practical way, in the sense that the prevalence of mental disorders in general on the prevalence of schizophrenia is quite small. There is however a statistically significant positive correlation, with the exception of depression and drug use disorders. 
+
+
 
 ##Hypothesis 2
 
@@ -106,6 +140,8 @@ Depression is determined by the environment, ie the country/region a person live
 ```{r}
 model_2 <- lmer(Depression ~ Entity + (1|Year), data = df)
 summary(model_2)
+plot(model_2)
+qqnorm(residuals(model_2))
 ```
 
 
@@ -115,4 +151,47 @@ Mental health is getting worse
 ```{r}
 model_3 <- lmer(prevalence ~ Year + (1|disorder) + (1|Entity), data = long_df)
 summary(model_3)
+plot(model_3)
+qqnorm(residuals(model_3))
 ```
+
+## Plot relevant data for hypotheses
+
+
+```{r}
+
+```
+
+
+### Mixed Models with intercept and slope adjustments
+
+##Hypothesis 1
+
+```{r}
+model_1_max <- lmer(
+  Schizophrenia ~ Depression + Eating.disorders + Bipolar.disorder + 
+    Anxiety.disorders + Drug.use.disorders + Alcohol.use.disorders + 
+    (1 + Depression + Eating.disorders + Bipolar.disorder + 
+       Anxiety.disorders + Drug.use.disorders + Alcohol.use.disorders | Entity) + (1 + Depression + Eating.disorders + Bipolar.disorder + 
+       Anxiety.disorders + Drug.use.disorders + Alcohol.use.disorders | Year), 
+  data = df
+)
+summary(model_1_max)
+anova(model_1_max, model_1)
+plot(model_1_max)
+qqnorm(residuals(model_1_max))
+```
+
+
+##Hypothesis 2
+
+```{r}
+
+```
+
+##Hypothesis 3
+
+```{r}
+
+```
+
