@@ -92,12 +92,27 @@ df %>% ggplot(aes(x=Year, y=Schizophrenia)) +
 
 ## Hypothesis 1
 
+Schizophrenia prevalence is not correlated with other mental disorders
+
 ```{r}
-model_1 <- lmer(Depression ~ Year + (1|Entity), data = df)
+model_1 <- lmer(Schizophrenia ~ Depression + Eating.disorders + Bipolar.disorder + Anxiety.disorders + Drug.use.disorders + Alcohol.use.disorders + (1|Entity), data = df)
 summary(model_1)
 ```
 
+##Hypothesis 2
+
+Depression is determined by the environment, ie the country/region a person lives in in this case.
+
 ```{r}
-model_1 <- lmer(Depression ~ Entity + (1|Year), data = df)
-summary(model_1)
+model_2 <- lmer(Depression ~ Entity + (1|Year), data = df)
+summary(model_2)
+```
+
+
+## Hypothesis 3:
+Mental health is getting worse
+
+```{r}
+model_3 <- lmer(prevalence ~ Year + (1|disorder) + (1|Entity), data = long_df)
+summary(model_3)
 ```
