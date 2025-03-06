@@ -25,6 +25,7 @@ knitr::opts_chunk$set(
 ```{r packages}
 # Load necessary packages
 
+
 library(tidyverse)
 
 library(lme4)      # For mixed linear models
@@ -32,6 +33,7 @@ library(ggExtra)
 library(moments)
 library(corrplot)
 library(MuMIn)
+
 
 ```
 
@@ -75,6 +77,8 @@ summary(df)
 ```{r}
 
 long_df <- pivot_longer(df, cols = c(Schizophrenia, Bipolar.disorder, Eating.disorders, Anxiety.disorders, Drug.use.disorders, Depression, Alcohol.use.disorders), names_to = 'disorder', values_to = 'prevalence')
+long_df <- long_df %>%
+  mutate(prevalence_log = log(prevalence))
 
 long_df %>% ggplot(aes(x = prevalence, fill = disorder)) + 
   geom_histogram() + 
@@ -97,8 +101,6 @@ cor_matrix <- cor(df[,c("Schizophrenia", "Bipolar.disorder", "Eating.disorders",
 # Visualize correlations
 corrplot::corrplot(cor_matrix, method = "circle")
 
-
-mean(df$Schizophrenia)
 
 ```
 
@@ -142,17 +144,25 @@ model_2 <- lmer(Depression ~ Entity + (1|Year), data = df)
 summary(model_2)
 plot(model_2)
 qqnorm(residuals(model_2))
+r.squaredGLMM(model_2)
+
+
 ```
+For the prevalence of Depression we can see that a lot of countries have quite a large effect on Depression. For example Greenland has the largest slope estimate at 2.3. The baseline is 4.1%. The marginal R^2 representing R^2 for fixed effects is almost the same as the conditional R^2, around 98%, which can be interpreted as the country or region being a very good predictor for prevalence of depression. The year in which data was measured doesn't seem to have much at all influence.
+
+The residuals
+
 
 
 ## Hypothesis 3:
-Mental health is getting worse
+Global Mental health is getting worse
 
 ```{r}
 model_3 <- lmer(prevalence ~ Year + (1|disorder) + (1|Entity), data = long_df)
 summary(model_3)
 plot(model_3)
 qqnorm(residuals(model_3))
+r.squaredGLMM(model_3)
 ```
 
 ## Plot relevant data for hypotheses
@@ -194,4 +204,3 @@ qqnorm(residuals(model_1_max))
 ```{r}
 
 ```
-
